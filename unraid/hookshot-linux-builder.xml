@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>hookshot-linux-builder</Name>
+  <Repository>ghcr.io/cosmicflow2512/hookshot-linux-builder:latest</Repository>
+  <Registry>https://github.com/cosmicflow2512/hookshot-linux-builder/pkgs/container/hookshot-linux-builder</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/cosmicflow2512/hookshot-linux-builder/issues</Support>
+  <Project>https://github.com/cosmicflow2512/hookshot-linux-builder</Project>
+  <Overview>Baut NotRexed/Hookshot (Ocarina of Time, Switch-2-Recompilation) als Linux-Spielordner aus der eigenen .nup, ohne Fenster, mit der offiziellen AppImage des neuesten Releases. Kopiert den Ordner optional per rsync/SSH auf den Linux-Rechner. Web-UI zum Starten der Stufen und Mitlesen des Logs. Braucht rund 60 GB waehrend des Builds.</Overview>
+  <Category>Tools: GameServers:</Category>
+  <WebUI>http://[IP]:[PORT:8485]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/cosmicflow2512/hookshot-linux-builder/main/unraid/hookshot-linux-builder.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/cosmicflow2512/hookshot-linux-builder/main/unraid/icon.png</Icon>
+  <ExtraParams>--memory=8g --memory-swap=8g</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>Eigene .nup von Ocarina of Time: Programm 0400486024DEC000, Update v131072, Build e0f3ccfa.</Requires>
+  <Config Name="Web-UI Port" Target="8485" Default="8485" Mode="tcp" Description="Port der Web-UI" Type="Port" Display="always" Required="true" Mask="false">8485</Config>
+  <Config Name="Appdata" Target="/config" Default="/mnt/user/appdata/hookshot-linux-builder" Mode="rw" Description="Builder (entpackte AppImage, rund 900 MB), Build-Dateien, Logs, SSH-Schluessel. Auf den Cache legen" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/hookshot-linux-builder</Config>
+  <Config Name="Spiel-Ordner (.nup)" Target="/nup" Default="/mnt/user/PS5/Switch2" Mode="ro" Description="Ordner mit der .nup (wird nur gelesen)" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/PS5/Switch2</Config>
+  <Config Name="Ausgabe (Spielordner)" Target="/output" Default="/mnt/user/PS5/Hookshot-Linux" Mode="rw" Description="Hier entsteht der fertige Spielordner (mit dem romfs des Spiels, Groessenordnung der .nup). Auf einer SSD baut es deutlich schneller" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/PS5/Hookshot-Linux</Config>
+  <Config Name="NUP_FILE" Target="NUP_FILE" Default="" Mode="" Description="Optional: voller Pfad der .nup im Container (z. B. /nup/spiel.nup). Leer: erste .nup mit 0400486024DEC000 im Namen unter /nup" Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="HOOKSHOT_REF" Target="HOOKSHOT_REF" Default="latest" Mode="" Description="latest: neuestes Release von NotRexed/Hookshot. Oder ein Release-Tag, z. B. v2.1.0 oder v2.2.0-rc.1" Type="Variable" Display="always" Required="false" Mask="false">latest</Config>
+  <Config Name="LANGUAGE" Target="LANGUAGE" Default="de" Mode="" Description="Spielsprache (language.txt): en-US, en-GB, fr, fr-CA, de, it, es, es-419, pt-BR, nl, pl, ru, ja, ko, zh-Hans, zh-Hant" Type="Variable" Display="always" Required="false" Mask="false">de</Config>
+  <Config Name="DEPLOY_TARGET" Target="DEPLOY_TARGET" Default="" Mode="" Description="Optional, fuer das Deploy: benutzer@rechner:/pfad/zum/Spielordner. Der SSH-Schluessel des Containers steht in der Web-UI" Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="DEPLOY_PORT" Target="DEPLOY_PORT" Default="22" Mode="" Description="SSH-Port des Zielrechners" Type="Variable" Display="always" Required="false" Mask="false">22</Config>
+  <Config Name="AUTO_DEPLOY" Target="AUTO_DEPLOY" Default="false|true" Mode="" Description="true: nach 'Alles bauen' automatisch deployen" Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="Besitzer des Spielordners nach dem Build" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Gruppe des Spielordners nach dem Build" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="RUN_ON_START" Target="RUN_ON_START" Default="false|true" Mode="" Description="true: beim Containerstart sofort 'Alles bauen'" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="JOBS" Target="JOBS" Default="" Mode="" Description="Compiler gleichzeitig (HOOKSHOT_JOBS). Leer: einer je CPU-Thread, soweit der Speicher reicht" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="HOOKSHOT_MEM_LIMIT_GB" Target="HOOKSHOT_MEM_LIMIT_GB" Default="" Mode="" Description="GB, die die Compiler zusammen nehmen duerfen. Leer: Speicherlimit des Containers minus 2 GB" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="EXTRA_ARGS" Target="EXTRA_ARGS" Default="" Mode="" Description="Weitere Optionen fuer nx2/make_game.py, z. B. --fsr" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+</Container>
