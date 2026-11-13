@@ -60,7 +60,7 @@ Web-UI und im Container-Log und gehört auf dem Zielrechner in `~/.ssh/authorize
 
 ## Speicher
 
-Das Template begrenzt den Container mit `--memory=8g --memory-swap=8g`. Upstream teilt Compiler und Lift-Worker nach
+Das Template begrenzt den Container mit `--memory=6g --memory-swap=6g`. Upstream teilt Compiler und Lift-Worker nach
 dem freien RAM des Hosts ein und sieht ein Container-Limit nicht. Mit Limit setzt `build.sh` deshalb
 `HOOKSHOT_MEM_LIMIT_GB` (Limit minus 2 GB) und `HOOKSHOT_LIFT_JOBS` (1 unter 10 GB) selbst. Mehr Limit heißt mehr
 Compiler gleichzeitig. Ohne Limit (Extra Parameters leeren) entscheidet Upstream.

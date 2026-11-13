@@ -14,7 +14,7 @@
   <WebUI>http://[IP]:[PORT:8485]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/cosmicflow2512/hookshot-linux-builder/main/unraid/hookshot-linux-builder.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/cosmicflow2512/hookshot-linux-builder/main/unraid/icon.png</Icon>
-  <ExtraParams>--memory=8g --memory-swap=8g</ExtraParams>
+  <ExtraParams>--memory=6g --memory-swap=6g</ExtraParams>
   <PostArgs/>
   <CPUset/>
   <DonateText/>
