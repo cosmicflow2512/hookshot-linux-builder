@@ -2,7 +2,7 @@
 # hookshot-linux-builder: baut den Linux-Spielordner von NotRexed/Hookshot mit dessen offizieller AppImage, ohne Fenster.
 #
 #   build.sh check    neuestes Release gegen den geladenen Builder und den gebauten Spielordner
-#   build.sh update   AppImage von HOOKSHOT_REF (Standard: neuestes Release) laden, pruefen (SHA256SUMS), entpacken
+#   build.sh update   AppImage des gewaehlten Releases (Standard: neuestes stabiles) laden, pruefen (SHA256SUMS), entpacken
 #   build.sh build    AppRun --cli (nx2/make_game.py): .nup lesen, Lift, Kompilieren, Spielordner nach $OUT_DIR
 #   build.sh deploy   Spielordner per rsync/SSH auf den Linux-Rechner (DEPLOY_TARGET)
 #   build.sh all      update + build (+ deploy bei AUTO_DEPLOY=true)
@@ -16,7 +16,10 @@ NUP_DIR=${NUP_DIR:-/nup}
 OUT_DIR=${OUT_DIR:-/output}
 REPO=${HOOKSHOT_REPO:-NotRexed/Hookshot}
 GH="https://github.com/$REPO"
+# Welches Release: die Auswahl aus der Web-UI ($CONFIG_DIR/ref), sonst HOOKSHOT_REF. latest = neuestes stabiles Release,
+# sonst der Tag eines Releases: v2.1.0, v2.2.0-rc.1, nightly (der Entwicklungsstand) ...
 REF=${HOOKSHOT_REF:-latest}
+if [[ -s $CONFIG_DIR/ref ]]; then REF=$(tr -d ' \r\n' < "$CONFIG_DIR/ref"); fi
 LANGUAGE=${LANGUAGE:-de}
 BUILDERS="$CONFIG_DIR/builder"
 WORK="$CONFIG_DIR/work"
@@ -91,6 +94,15 @@ want_tag() {
     fi
 }
 
+# Die AppImage eines Releases, aus dessen SHA256SUMS: "<sha256> <name>". Der Name wird gelesen, nicht aus dem Tag
+# gebildet: beim nightly heisst sie nach ihrem Build (Hookshot-v2.2.0-rc.1-34-gb4c81530-x86_64.AppImage).
+release_appimage() {   # tag -> "sha name"
+    local sums
+    sums=$("${CURL[@]}" "$GH/releases/download/$1/SHA256SUMS") || return 1
+    awk '$2 ~ /^Hookshot-.*-x86_64\.AppImage$/ {print $1, $2; exit}' <<<"$sums" | grep .
+}
+appimage_version() { local v=${1#Hookshot-}; echo "${v%-x86_64.AppImage}"; }
+
 builder_tag() { [[ -f $BUILDERS/current ]] && tr -d ' \r\n' < "$BUILDERS/current" || true; }
 apprun() {
     local tag; tag=$(builder_tag)
@@ -99,37 +111,37 @@ apprun() {
 game_tag() { { sed -n 's/^version=//p' "$OUT_DIR/hookshot_version.txt" 2>/dev/null || true; } | head -1 | tr -d '\r '; }
 
 stage_update() {
-    local tag name tmp want
+    local tag name tmp want ver line
     tag=$(want_tag)
-    log "Builder $tag ($GH/releases/tag/$tag)"
+    log "Builder fuer $tag ($GH/releases/tag/$tag)"
     mkdir -p "$BUILDERS"
-    if [[ -x $BUILDERS/$tag/AppRun ]]; then
-        echo "  schon entpackt: $BUILDERS/$tag"
+    line=$(release_appimage "$tag") ||
+        die "SHA256SUMS von $tag nicht ladbar oder ohne Linux-AppImage: nichts wird ungeprueft entpackt"
+    want=${line%% *} name=${line#* }
+    ver=$(appimage_version "$name")
+    valid_tag "$ver" || die "unerwarteter AppImage-Name: $name"
+    if [[ -x $BUILDERS/$ver/AppRun ]]; then
+        echo "  schon entpackt: $BUILDERS/$ver"
     else
-        name="Hookshot-$tag-x86_64.AppImage"
         tmp="$BUILDERS/.dl"
         rm -rf "$tmp"; mkdir -p "$tmp"
         echo "  lade $name"
         "${CURL[@]}" -o "$tmp/$name" "$GH/releases/download/$tag/$name" || die "Download von $name fehlgeschlagen"
-        "${CURL[@]}" -o "$tmp/SHA256SUMS" "$GH/releases/download/$tag/SHA256SUMS" ||
-            die "SHA256SUMS von $tag nicht ladbar: die AppImage wird nicht ungeprueft entpackt"
-        want=$(awk -v n="$name" '$2 == n {print $1}' "$tmp/SHA256SUMS")
-        [[ -n $want ]] || die "$name steht nicht in SHA256SUMS"
         [[ $(sha256sum "$tmp/$name" | cut -d' ' -f1) == "$want" ]] || die "SHA-256 von $name stimmt nicht"
         echo "  SHA-256 stimmt ($want)"
         chmod +x "$tmp/$name"
         (cd "$tmp" && "./$name" --appimage-extract >/dev/null) || die "Entpacken der AppImage fehlgeschlagen"
         [[ -x $tmp/squashfs-root/AppRun ]] || die "AppRun fehlt in der AppImage"
-        mv "$tmp/squashfs-root" "$BUILDERS/$tag"
+        mv "$tmp/squashfs-root" "$BUILDERS/$ver"
         rm -rf "$tmp"
     fi
-    echo "$tag" > "$BUILDERS/current"
+    echo "$ver" > "$BUILDERS/current"
     local d
-    for d in "$BUILDERS"/*/; do   # aeltere Builder (je rund 900 MB) weg
+    for d in "$BUILDERS"/*/; do   # andere Builder (je rund 900 MB) weg
         d=${d%/}
-        if [[ -d $d && $(basename "$d") != "$tag" ]]; then rm -rf "$d"; fi
+        if [[ -d $d && $(basename "$d") != "$ver" ]]; then rm -rf "$d"; fi
     done
-    echo "  Builder: $tag  ($(du -sh "$BUILDERS/$tag" | cut -f1))"
+    echo "  Builder: $ver  ($(du -sh "$BUILDERS/$ver" | cut -f1))"
 }
 
 find_nup() {
@@ -208,19 +220,18 @@ stage_deploy() {
 
 stage_check() {
     log "Auf Updates pruefen"
-    local latest have built update=false
+    local latest have built tag line want update=false
     latest=$(latest_tag) || die "neuestes Release von $REPO nicht ermittelbar"
+    tag=$(want_tag)
+    line=$(release_appimage "$tag") || die "SHA256SUMS von $tag nicht ladbar oder ohne Linux-AppImage"
+    want=$(appimage_version "${line#* }")
     have=$(builder_tag); built=$(game_tag)
-    printf '  %-22s %s\n' "Neuestes Release:" "$latest" "Builder im Container:" "${have:-keiner}" "Gebauter Spielordner:" "${built:-keiner}"
-    if [[ $REF != latest ]]; then
-        echo "  HOOKSHOT_REF=$REF ist fest eingestellt: gebaut wird $REF, nicht $latest."
-        [[ $built == "$REF" ]] || update=true
-    elif [[ $built != "$latest" ]]; then
-        update=true
-    fi
-    if [[ $update == true ]]; then echo "  -> \"Alles bauen\" bringt den Spielordner auf den gewuenschten Stand."; else echo "  -> alles aktuell."; fi
-    printf '{"time": "%s", "latest": "%s", "builder": "%s", "built": "%s", "update": %s}\n' \
-        "$(date '+%d.%m.%Y %H:%M')" "$latest" "$have" "$built" "$update" > "$CONFIG_DIR/update-check.json"
+    printf '  %-24s %s\n' "Neuestes stabiles Release:" "$latest" "Gewaehlt ($REF):" "$want" \
+        "Builder im Container:" "${have:-keiner}" "Gebauter Spielordner:" "${built:-keiner}"
+    [[ $built == "$want" ]] || update=true
+    if [[ $update == true ]]; then echo "  -> \"Alles bauen\" bringt den Spielordner auf $want."; else echo "  -> alles aktuell."; fi
+    printf '{"time": "%s", "latest": "%s", "want": "%s", "builder": "%s", "built": "%s", "update": %s}\n' \
+        "$(date '+%d.%m.%Y %H:%M')" "$latest" "$want" "$have" "$built" "$update" > "$CONFIG_DIR/update-check.json"
 }
 
 free_gb() { df -Pk "$1" 2>/dev/null | awk 'NR==2 {print int($4/1024/1024)}'; }

@@ -28,6 +28,10 @@
   .ok { color:var(--acc); } .bad { color:var(--err); } .run { color:var(--warn); }
   pre { margin:0; height:calc(100vh - 110px); min-height:300px; overflow:auto; background:#0b0d10; border-radius:6px; padding:10px; font:12px/1.4 ui-monospace, monospace; white-space:pre-wrap; word-break:break-all; }
   .side { display:grid; gap:16px; align-content:start; }
+  select { width:100%; background:#232833; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:8px; font:inherit; }
+  .relbar { display:grid; grid-template-columns: 1fr auto; gap:6px; }
+  .relbar button { width:auto; }
+  #relmsg { color:var(--dim); font-size:12px; margin-top:6px; }
   code { font:12px ui-monospace, monospace; word-break:break-all; }
 </style>
 </head>
@@ -47,10 +51,15 @@
       </div>
     </section>
     <section>
+      <h2>Release</h2>
+      <div class="relbar"><select id="rel"></select><button id="relload" title="Liste neu laden">&#8635;</button></div>
+      <div id="relmsg">&hellip;</div>
+    </section>
+    <section>
       <h2>Stand</h2>
       <dl>
         <dt>Spiel</dt><dd id="nup">&ndash;</dd>
-        <dt>Ref</dt><dd id="ref">&ndash;</dd>
+        <dt>Release</dt><dd id="ref">&ndash;</dd>
         <dt>Builder</dt><dd id="builder">&ndash;</dd>
         <dt>Letzter Build</dt><dd id="build">&ndash;</dd>
         <dt>Updates</dt><dd id="upd">noch nicht geprüft</dd>
@@ -81,6 +90,7 @@ async function refresh() {
     else if (s.code !== null) { st.textContent = s.stage + ': Fehler (Exit ' + s.code + ')'; st.className = 'bad'; }
     else { st.textContent = 'bereit'; st.className = ''; }
     document.querySelectorAll('button[data-stage]').forEach(b => b.disabled = s.running);
+    $('#rel').disabled = s.running;
     $('#stop').disabled = !s.running;
     $('#nup').textContent = s.nup || 'keine .nup gefunden';
     $('#ref').textContent = s.ref;
@@ -91,7 +101,7 @@ async function refresh() {
     $('#pubkey').textContent = s.pubkey || 'noch nicht erzeugt';
     const u = s.updates, ud = $('#upd');
     if (u) { ud.textContent = (u.update ? 'es gibt etwas zu tun' : 'alles aktuell') + ' (gebaut: ' + (u.built || 'nichts') +
-      ', neuestes: ' + (u.latest || '?') + ', geprüft ' + u.time + ')'; ud.className = u.update ? 'run' : 'ok'; }
+      ', gewählt: ' + (u.want || u.latest || '?') + ', geprüft ' + u.time + ')'; ud.className = u.update ? 'run' : 'ok'; }
     if (s.log !== lastLog) { lastLog = s.log; next = 0; $('#log').textContent = ''; }
   } catch (e) { $('#state').textContent = 'keine Verbindung'; }
   try {
@@ -112,6 +122,27 @@ document.querySelectorAll('button[data-stage]').forEach(b => b.onclick = async (
   if (!r.ok) alert(r.msg);
   next = 0; lastLog = null; refresh();
 });
+const KIND = { stable: '', pre: 'Vorab', nightly: 'Entwicklungsstand' };
+async function loadReleases(refresh) {
+  const sel = $('#rel'), msg = $('#relmsg');
+  try {
+    const r = await api('/api/releases' + (refresh ? '?refresh=1' : ''));
+    const opts = [['latest', 'latest: neuestes stabiles Release']].concat(r.releases.map(x =>
+      [x.tag, x.tag + ([KIND[x.kind], x.date].filter(Boolean).length ? ' (' + [KIND[x.kind], x.date].filter(Boolean).join(', ') + ')' : '')]));
+    if (!opts.some(o => o[0] === r.ref)) opts.push([r.ref, r.ref]);
+    sel.innerHTML = '';
+    opts.forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; sel.appendChild(o); });
+    sel.value = r.ref;
+    msg.textContent = r.error ? r.error : r.releases.length + ' Releases (' + r.source + '). Gebaut wird die Auswahl bei „Alles bauen“.';
+  } catch (e) { msg.textContent = 'Release-Liste nicht ladbar'; }
+}
+$('#rel').onchange = async () => {
+  const r = await api('/api/ref?ref=' + encodeURIComponent($('#rel').value), { method: 'POST' });
+  if (!r.ok) { alert(r.msg); loadReleases(false); }
+  refresh();
+};
+$('#relload').onclick = () => loadReleases(true);
+loadReleases(false);
 $('#stop').onclick = () => api('/api/stop', { method: 'POST' }).then(refresh);
 refresh(); setInterval(refresh, 2000);
 </script>

@@ -12,7 +12,7 @@ offizielle AppImage des Releases, prüft sie gegen `SHA256SUMS` des Releases und
 | Stufe | Inhalt |
 | --- | --- |
 | check | neuestes Release gegen den geladenen Builder und den gebauten Spielordner |
-| update | `Hookshot-<tag>-x86_64.AppImage` von `HOOKSHOT_REF` laden (Standard `latest`), SHA-256 prüfen, entpacken |
+| update | AppImage des gewählten Releases laden (Standard `latest`), SHA-256 prüfen, entpacken |
 | build | `AppRun --cli` (das ist `nx2/make_game.py`): `.nup` lesen, Lift, Kompilieren, Spielordner nach `/output` |
 | deploy | `/output` per rsync über SSH nach `DEPLOY_TARGET`, ohne `--delete` |
 
@@ -29,6 +29,13 @@ Abweichungen vom Build am Spielrechner:
   würde den Builder starten, der den Ordner gebaut hat, und der liegt im Container. Updates baut „Alles bauen".
 - **CPU:** Upstream baut für die x86-64-Stufe des bauenden Rechners (`nx2/host_cpu.py`), mit AVX2 also `x86-64-v3`.
   Der Zielrechner braucht dann ebenfalls AVX2, FMA, BMI2 und MOVBE.
+
+## Release wählen
+
+Die Web-UI listet alle Releases von NotRexed/Hookshot: stabile, Vorabversionen (rc) und `nightly`, den
+Entwicklungsstand. Die Auswahl liegt in `/config/ref`, gilt ab dem nächsten „Alles bauen" und geht vor `HOOKSHOT_REF`.
+`latest` folgt immer dem neuesten stabilen Release. Die Liste kommt von GitHubs API, ersatzweise aus den Git-Tags.
+Welche AppImage zu einem Release gehört, liest der Container aus dessen `SHA256SUMS`.
 
 ## Voraussetzungen
 
@@ -70,7 +77,7 @@ Compiler gleichzeitig. Ohne Limit (Extra Parameters leeren) entscheidet Upstream
 | Variable | Standard | Bedeutung |
 | --- | --- | --- |
 | `NUP_FILE` | leer | Pfad der `.nup` im Container. Leer: erste `.nup` mit `0400486024DEC000` im Namen unter `/nup` |
-| `HOOKSHOT_REF` | `latest` | `latest` = neuestes Release, oder ein Release-Tag (`v2.1.0`, `v2.2.0-rc.1`) |
+| `HOOKSHOT_REF` | `latest` | Vorgabe, solange in der Web-UI nichts gewählt ist: `latest` = neuestes stabiles Release, oder ein Release-Tag (`v2.1.0`, `v2.2.0-rc.1`, `nightly`) |
 | `LANGUAGE` | `de` | Spielsprache, wird in `language.txt` geschrieben |
 | `DEPLOY_TARGET` | leer | `benutzer@rechner:/pfad` für das Deploy |
 | `DEPLOY_PORT` | `22` | SSH-Port |

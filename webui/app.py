@@ -3,11 +3,13 @@ import glob
 import http.server
 import json
 import os
+import re
 import signal
 import subprocess
 import threading
 import time
 import urllib.parse
+import urllib.request
 
 CONFIG = os.environ.get("CONFIG_DIR", "/config")
 OUT = os.environ.get("OUT_DIR", "/output")
@@ -15,6 +17,12 @@ LOGS = os.path.join(CONFIG, "logs")
 PORT = int(os.environ.get("WEBUI_PORT", "8485"))
 STAGES = ("check", "all", "update", "build", "deploy")
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+REPO = os.environ.get("HOOKSHOT_REPO", "NotRexed/Hookshot")
+REF_FILE = os.path.join(CONFIG, "ref")
+TAG_RE = re.compile(r"^[A-Za-z0-9._+-]{1,80}$")
+RELEASE_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:-([A-Za-z]+)\.?(\d+)?)?$")
+releases_cache = {"time": 0, "data": None}
 
 state = {"proc": None, "stage": None, "started": None, "ended": None, "code": None, "log": None}
 lock = threading.Lock()
@@ -72,6 +80,62 @@ def read_line(path):
         return None
 
 
+def current_ref():
+    return read_line(REF_FILE) or os.environ.get("HOOKSHOT_REF", "latest")
+
+
+def release_kind(tag, prerelease=False):
+    if tag == "nightly":
+        return "nightly"
+    m = RELEASE_RE.match(tag)
+    return "pre" if prerelease or (m and m.group(4)) else "stable"
+
+
+def release_order(tag):
+    """Neueste zuerst: nach Version, ein fertiges Release vor seinen Vorabversionen"""
+    m = RELEASE_RE.match(tag)
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)), 0 if m.group(4) else 1, m.group(4) or "", int(m.group(5) or 0))
+
+
+def fetch_releases():
+    """Alle Releases von REPO, auch Vorabversionen und nightly. Erst GitHubs API (kennt Datum und Vorab-Kennzeichen),
+    sonst die Tags per git ls-remote (ohne Anmeldung sind es bei der API 60 Abfragen je Stunde). Die Sammel-Releases
+    linux-parts und builder-parts haben keine AppImage und fallen weg: nur v<Zahl>... und nightly bleiben"""
+    out = []
+    try:
+        req = urllib.request.Request("https://api.github.com/repos/%s/releases?per_page=100" % REPO,
+                                     headers={"Accept": "application/vnd.github+json", "User-Agent": "hookshot-linux-builder"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            for rel in json.load(r):
+                tag = rel.get("tag_name") or ""
+                if rel.get("draft") or not (tag == "nightly" or RELEASE_RE.match(tag)):
+                    continue
+                out.append({"tag": tag, "kind": release_kind(tag, bool(rel.get("prerelease"))),
+                            "date": (rel.get("published_at") or "")[:10]})
+        source = "GitHub-API"
+    except Exception:
+        r = subprocess.run(["git", "ls-remote", "--tags", "https://github.com/%s.git" % REPO],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode:
+            raise RuntimeError("Release-Liste nicht abrufbar: " + r.stderr.strip()[:200])
+        tags = {l.split("refs/tags/", 1)[1].replace("^{}", "") for l in r.stdout.splitlines() if "refs/tags/" in l}
+        out = [{"tag": t, "kind": release_kind(t), "date": ""} for t in tags if t == "nightly" or RELEASE_RE.match(t)]
+        source = "git-Tags"
+    nightly = [x for x in out if x["tag"] == "nightly"]
+    rest = sorted((x for x in out if x["tag"] != "nightly"), key=lambda x: release_order(x["tag"]), reverse=True)
+    return {"source": source, "releases": nightly + rest}
+
+
+def releases(force=False):
+    with lock:
+        if not force and releases_cache["data"] and time.time() - releases_cache["time"] < 600:
+            return releases_cache["data"]
+    data = fetch_releases()
+    with lock:
+        releases_cache.update(time=time.time(), data=data)
+    return data
+
+
 def free_gb(path):
     try:
         st = os.statvfs(path)
@@ -89,7 +153,7 @@ def status():
     nup_dir = os.environ.get("NUP_DIR", "/nup")
     s["nup"] = os.environ.get("NUP_FILE") or next(iter(sorted(glob.glob(os.path.join(nup_dir, "*.nup")) +
                                                              glob.glob(os.path.join(nup_dir, "*", "*.nup")))), None)
-    s["ref"] = os.environ.get("HOOKSHOT_REF", "latest")
+    s["ref"] = current_ref()
     s["builder"] = read_line(os.path.join(CONFIG, "builder", "current"))
     s["build"] = read_json("build-info.json") if os.path.exists(os.path.join(OUT, "bin", "hookshot")) else None
     s["updates"] = read_json("update-check.json")
@@ -120,6 +184,12 @@ class H(http.server.BaseHTTPRequestHandler):
                 return self.send(200, fh.read(), "text/html; charset=utf-8")
         if u.path == "/api/status":
             return self.send(200, json.dumps(status()))
+        if u.path == "/api/releases":
+            try:
+                force = urllib.parse.parse_qs(u.query).get("refresh", ["0"])[0] == "1"
+                return self.send(200, json.dumps(dict(releases(force), ref=current_ref())))
+            except Exception as e:
+                return self.send(502, json.dumps({"error": str(e), "ref": current_ref(), "releases": []}))
         if u.path == "/api/log":
             q = urllib.parse.parse_qs(u.query)
             try:
@@ -149,6 +219,16 @@ class H(http.server.BaseHTTPRequestHandler):
                 return self.send(400, json.dumps({"ok": False, "msg": "unbekannte Stufe"}))
             ok, msg = start(stage)
             return self.send(200 if ok else 409, json.dumps({"ok": ok, "msg": msg}))
+        if u.path == "/api/ref":
+            ref = urllib.parse.parse_qs(u.query).get("ref", [""])[0]
+            if not TAG_RE.match(ref):
+                return self.send(400, json.dumps({"ok": False, "msg": "kein gueltiges Tag"}))
+            with lock:
+                if state["proc"] and state["proc"].poll() is None:
+                    return self.send(409, json.dumps({"ok": False, "msg": "waehrend eines Laufs nicht aenderbar"}))
+            with open(REF_FILE, "w") as fh:
+                fh.write(ref + "\n")
+            return self.send(200, json.dumps({"ok": True, "ref": ref}))
         if u.path == "/api/stop":
             return self.send(200, json.dumps({"ok": stop()}))
         self.send(404, '{"error":"not found"}')
