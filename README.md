@@ -89,4 +89,4 @@ Kommandozeile ohne Web-UI: `docker exec -it hookshot-linux-builder /app/scripts/
 
 ## Lizenz
 
-GPL-3.0-or-later, wie Hookshot. Das Icon stammt aus Hookshot (`assets/hookshot.png`).
+GPL-3.0, wie Hookshot. Das Icon stammt aus Hookshot (`assets/hookshot.png`).
