@@ -223,7 +223,7 @@ free_gb() { df -Pk "$1" 2>/dev/null | awk 'NR==2 {print int($4/1024/1024)}'; }
 stage=${1:-all}
 mkdir -p "$CONFIG_DIR" "$HOME"
 IMAGE_REV=${IMAGE_REV:-unbekannt}
-echo "Image: ${IMAGE_REV:0:7}  Ref: $REF  Sprache: $LANGUAGE  Jobs: ${HOOKSHOT_JOBS:-auto}  Compiler-RAM: ${HOOKSHOT_MEM_LIMIT_GB:-auto} GB  Lift: ${HOOKSHOT_LIFT_JOBS:-auto}  RAM frei: $(awk '/^MemAvailable:/ {print int($2/1024/1024)}' /proc/meminfo) GB  Container-Limit: $(l=$(cgroup_limit_mb); echo "${l:+$l MB}${l:-keins}")"
+echo "Image: ${IMAGE_REV:0:7}  Ref: $REF  Sprache: $LANGUAGE  Jobs: ${HOOKSHOT_JOBS:-auto}  Compiler-RAM: ${HOOKSHOT_MEM_LIMIT_GB:-auto} GB  Lift: ${HOOKSHOT_LIFT_JOBS:-auto}  RAM frei: $(awk '/^MemAvailable:/ {print int($2/1024/1024)}' /proc/meminfo) GB  Container-Limit: $(l=$(cgroup_limit_mb); if [[ -n $l ]]; then echo "$l MB"; else echo keins; fi)"
 echo "Frei: $(free_gb "$CONFIG_DIR") GB unter $CONFIG_DIR, $(free_gb "$OUT_DIR") GB unter $OUT_DIR (Upstream nennt rund 60 GB waehrend des Builds)"
 case $stage in
     check) stage_check ;;
