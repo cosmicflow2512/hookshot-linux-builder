@@ -98,10 +98,26 @@ def release_order(tag):
 
 
 def fetch_releases():
-    """Alle Releases von REPO, auch Vorabversionen und nightly. Erst GitHubs API (kennt Datum und Vorab-Kennzeichen),
-    sonst die Tags per git ls-remote (ohne Anmeldung sind es bei der API 60 Abfragen je Stunde). Die Sammel-Releases
-    linux-parts und builder-parts haben keine AppImage und fallen weg: nur v<Zahl>... und nightly bleiben"""
-    out = []
+    """Alle Releases von REPO, auch Vorabversionen und nightly: die Git-Tags (git ls-remote) und GitHubs API zusammen.
+    Die API kennt Datum und Vorab-Kennzeichen, erlaubt aber ohne Anmeldung nur 60 Abfragen je Stunde, und GitHubs
+    Release-Seite fuehrt nicht jedes Release einzeln, dessen Dateien ladbar sind (v2.2.0-rc.1 stand dort nur als
+    rollendes "Latest release candidate"). Die Tags sind vollstaendig. Die Sammel-Releases (linux-parts, builder-parts, rc)
+    fallen weg: nur v<Zahl>... und nightly bleiben. Ob ein Tag eine Linux-AppImage hat, zeigt sich beim Laden an
+    seiner SHA256SUMS"""
+    found, sources = {}, []
+    try:
+        r = subprocess.run(["git", "ls-remote", "--tags", "https://github.com/%s.git" % REPO],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode:
+            raise RuntimeError(r.stderr.strip()[:200])
+        for l in r.stdout.splitlines():
+            if "refs/tags/" in l:
+                t = l.split("refs/tags/", 1)[1].replace("^{}", "")
+                if t == "nightly" or RELEASE_RE.match(t):
+                    found[t] = {"tag": t, "kind": release_kind(t), "date": ""}
+        sources.append("Git-Tags")
+    except Exception as e:
+        git_error = str(e)
     try:
         req = urllib.request.Request("https://api.github.com/repos/%s/releases?per_page=100" % REPO,
                                      headers={"Accept": "application/vnd.github+json", "User-Agent": "hookshot-linux-builder"})
@@ -110,20 +126,16 @@ def fetch_releases():
                 tag = rel.get("tag_name") or ""
                 if rel.get("draft") or not (tag == "nightly" or RELEASE_RE.match(tag)):
                     continue
-                out.append({"tag": tag, "kind": release_kind(tag, bool(rel.get("prerelease"))),
-                            "date": (rel.get("published_at") or "")[:10]})
-        source = "GitHub-API"
+                found[tag] = {"tag": tag, "kind": release_kind(tag, bool(rel.get("prerelease"))),
+                              "date": (rel.get("published_at") or "")[:10]}
+        sources.append("GitHub-API")
     except Exception:
-        r = subprocess.run(["git", "ls-remote", "--tags", "https://github.com/%s.git" % REPO],
-                           capture_output=True, text=True, timeout=30)
-        if r.returncode:
-            raise RuntimeError("Release-Liste nicht abrufbar: " + r.stderr.strip()[:200])
-        tags = {l.split("refs/tags/", 1)[1].replace("^{}", "") for l in r.stdout.splitlines() if "refs/tags/" in l}
-        out = [{"tag": t, "kind": release_kind(t), "date": ""} for t in tags if t == "nightly" or RELEASE_RE.match(t)]
-        source = "git-Tags"
-    nightly = [x for x in out if x["tag"] == "nightly"]
-    rest = sorted((x for x in out if x["tag"] != "nightly"), key=lambda x: release_order(x["tag"]), reverse=True)
-    return {"source": source, "releases": nightly + rest}
+        pass
+    if not sources:
+        raise RuntimeError("Release-Liste nicht abrufbar: " + git_error)
+    nightly = [x for x in found.values() if x["tag"] == "nightly"]
+    rest = sorted((x for x in found.values() if x["tag"] != "nightly"), key=lambda x: release_order(x["tag"]), reverse=True)
+    return {"source": " + ".join(sources), "releases": nightly + rest}
 
 
 def releases(force=False):

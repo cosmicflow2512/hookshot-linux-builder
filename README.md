@@ -34,7 +34,7 @@ Abweichungen vom Build am Spielrechner:
 
 Die Web-UI listet alle Releases von NotRexed/Hookshot: stabile, Vorabversionen (rc) und `nightly`, den
 Entwicklungsstand. Die Auswahl liegt in `/config/ref`, gilt ab dem nächsten „Alles bauen" und geht vor `HOOKSHOT_REF`.
-`latest` folgt immer dem neuesten stabilen Release. Die Liste kommt von GitHubs API, ersatzweise aus den Git-Tags.
+`latest` folgt immer dem neuesten stabilen Release. Die Liste kommt aus den Git-Tags, ergänzt um Datum und Vorab-Kennzeichen aus GitHubs API.
 Welche AppImage zu einem Release gehört, liest der Container aus dessen `SHA256SUMS`.
 
 ## Voraussetzungen
