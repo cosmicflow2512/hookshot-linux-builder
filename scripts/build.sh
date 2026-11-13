@@ -61,6 +61,11 @@ fi
 [[ -n ${HOOKSHOT_LIFT_JOBS:-} ]] && export HOOKSHOT_LIFT_JOBS
 [[ -n ${JOBS:-} ]] && export HOOKSHOT_JOBS="$JOBS"
 
+# mawk (Ubuntus awk) liest eine Pipe blockweise: die Zeilen des Builds kaemen erst nach 4 KB im Log an. -W interactive
+# liest zeilenweise.
+AWK=(awk)
+if awk -W version 2>&1 | grep -qi mawk; then AWK=(awk -W interactive); fi
+
 valid_tag() { [[ $1 =~ ^[A-Za-z0-9._+-]{1,80}$ ]]; }
 
 # Neuestes Release, aus zwei Quellen: hookshot-linux.txt des "latest"-Releases (die Liste, die Upstreams eigener
@@ -141,7 +146,7 @@ find_nup() {
 # Die @@-Zeilen von make_game.py (fuer Upstreams Builder-Fenster) lesbar machen: Fortschritt nur bei jedem vollen
 # Prozent, die Zeile je kompilierter Datei entfaellt.
 readable() {
-    awk '
+    "${AWK[@]}" '
         /^@@progress / { p = int($2 * 100); if (p != last) { last = p; printf "    %3d %%\n", p; fflush() } next }
         /^@@file /     { next }
         /^@@stage /    { sub(/^@@stage [^ ]+ /, ""); printf "\n--- %s\n", $0; last = -1; fflush(); next }
@@ -197,7 +202,7 @@ stage_deploy() {
     # Ohne --delete: was das Spiel auf dem Zielrechner in seinen Ordner schreibt (Einstellungen, Caches), bleibt.
     rsync -rltp --partial --no-inc-recursive --info=progress2,stats1 --exclude=.game \
         -e "ssh -i $key -p ${DEPLOY_PORT:-22} -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$CONFIG_DIR/ssh/known_hosts" \
-        "$OUT_DIR/" "$DEPLOY_TARGET/" 2>&1 | tr '\r' '\n' | awk '!/%/ || ++n % 50 == 0 { print; fflush() }'
+        "$OUT_DIR/" "$DEPLOY_TARGET/" 2>&1 | tr '\r' '\n' | "${AWK[@]}" '!/%/ || ++n % 50 == 0 { print; fflush() }'
     log "Deploy fertig"
 }
 
