@@ -18,7 +18,8 @@ PORT = int(os.environ.get("WEBUI_PORT", "8485"))
 STAGES = ("check", "all", "update", "build", "deploy")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-REPO = os.environ.get("HOOKSHOT_REPO", "NotRexed/Hookshot")
+REPO = os.environ.get("HOOKSHOT_REPO", "Hookshot/Hookshot")
+HOST = os.environ.get("HOOKSHOT_HOST", "https://git.notrexed.dev").rstrip("/")
 REF_FILE = os.path.join(CONFIG, "ref")
 TAG_RE = re.compile(r"^[A-Za-z0-9._+-]{1,80}$")
 RELEASE_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:-([A-Za-z]+)\.?(\d+)?)?$")
@@ -98,15 +99,15 @@ def release_order(tag):
 
 
 def fetch_releases():
-    """Alle Releases von REPO, auch Vorabversionen und nightly: die Git-Tags (git ls-remote) und GitHubs API zusammen.
-    Die API kennt Datum und Vorab-Kennzeichen, erlaubt aber ohne Anmeldung nur 60 Abfragen je Stunde, und GitHubs
+    """Alle Releases von REPO, auch Vorabversionen und nightly: die Git-Tags (git ls-remote) und Forgejos API zusammen.
+    Die API kennt Datum und Vorab-Kennzeichen, erlaubt aber ohne Anmeldung nur 60 Abfragen je Stunde, und Forgejos
     Release-Seite fuehrt nicht jedes Release einzeln, dessen Dateien ladbar sind (v2.2.0-rc.1 stand dort nur als
     rollendes "Latest release candidate"). Die Tags sind vollstaendig. Die Sammel-Releases (linux-parts, builder-parts, rc)
     fallen weg: nur v<Zahl>... und nightly bleiben. Ob ein Tag eine Linux-AppImage hat, zeigt sich beim Laden an
-    seiner SHA256SUMS"""
+    seinen Pruefsummen"""
     found, sources = {}, []
     try:
-        r = subprocess.run(["git", "ls-remote", "--tags", "https://github.com/%s.git" % REPO],
+        r = subprocess.run(["git", "ls-remote", "--tags", "%s/%s.git" % (HOST, REPO)],
                            capture_output=True, text=True, timeout=30)
         if r.returncode:
             raise RuntimeError(r.stderr.strip()[:200])
@@ -119,8 +120,8 @@ def fetch_releases():
     except Exception as e:
         git_error = str(e)
     try:
-        req = urllib.request.Request("https://api.github.com/repos/%s/releases?per_page=100" % REPO,
-                                     headers={"Accept": "application/vnd.github+json", "User-Agent": "hookshot-linux-builder"})
+        req = urllib.request.Request("%s/api/v1/repos/%s/releases?limit=100" % (HOST, REPO),
+                                     headers={"Accept": "application/json", "User-Agent": "hookshot-linux-builder"})
         with urllib.request.urlopen(req, timeout=15) as r:
             for rel in json.load(r):
                 tag = rel.get("tag_name") or ""
@@ -128,7 +129,7 @@ def fetch_releases():
                     continue
                 found[tag] = {"tag": tag, "kind": release_kind(tag, bool(rel.get("prerelease"))),
                               "date": (rel.get("published_at") or "")[:10]}
-        sources.append("GitHub-API")
+        sources.append("Forgejo-API")
     except Exception:
         pass
     if not sources:

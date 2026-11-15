@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# hookshot-linux-builder: baut den Linux-Spielordner von NotRexed/Hookshot mit dessen offizieller AppImage, ohne Fenster.
+# hookshot-linux-builder: baut den Linux-Spielordner von Hookshot/Hookshot mit dessen offizieller AppImage, ohne Fenster.
 #
 #   build.sh check    neuestes Release gegen den geladenen Builder und den gebauten Spielordner
-#   build.sh update   AppImage des gewaehlten Releases (Standard: neuestes stabiles) laden, pruefen (SHA256SUMS), entpacken
+#   build.sh update   AppImage des gewaehlten Releases (Standard: neuestes stabiles) laden, Pruefsumme pruefen, entpacken
 #   build.sh build    AppRun --cli (nx2/make_game.py): .nup lesen, Lift, Kompilieren, Spielordner nach $OUT_DIR
 #   build.sh deploy   Spielordner per rsync/SSH auf den Linux-Rechner (DEPLOY_TARGET)
 #   build.sh all      update + build (+ deploy bei AUTO_DEPLOY=true)
@@ -14,8 +14,10 @@ set -euo pipefail
 CONFIG_DIR=${CONFIG_DIR:-/config}
 NUP_DIR=${NUP_DIR:-/nup}
 OUT_DIR=${OUT_DIR:-/output}
-REPO=${HOOKSHOT_REPO:-NotRexed/Hookshot}
-GH="https://github.com/$REPO"
+REPO=${HOOKSHOT_REPO:-Hookshot/Hookshot}
+HOST=${HOOKSHOT_HOST:-https://git.notrexed.dev}
+GH="${HOST%/}/$REPO"
+API="${HOST%/}/api/v1/repos/$REPO"
 # Welches Release: die Auswahl aus der Web-UI ($CONFIG_DIR/ref), sonst HOOKSHOT_REF. latest = neuestes stabiles Release,
 # sonst der Tag eines Releases: v2.1.0, v2.2.0-rc.1, nightly (der Entwicklungsstand) ...
 REF=${HOOKSHOT_REF:-latest}
@@ -71,17 +73,11 @@ if awk -W version 2>&1 | grep -qi mawk; then AWK=(awk -W interactive); fi
 
 valid_tag() { [[ $1 =~ ^[A-Za-z0-9._+-]{1,80}$ ]]; }
 
-# Neuestes Release, aus zwei Quellen: hookshot-linux.txt des "latest"-Releases (die Liste, die Upstreams eigener
-# Updater liest, builder/linux/linux_update.py) und die Weiterleitung von /releases/latest.
+# Forgejo liefert das neueste stabile Release direkt ueber die API.
 latest_tag() {
-    local a b
-    a=$("${CURL[@]}" "$GH/releases/latest/download/hookshot-linux.txt" 2>/dev/null | sed -n 's/^tag \(.*\)$/\1/p' | head -1 | tr -d '\r ') || a=
-    b=$(curl -fsS --retry 3 --proto '=https' -o /dev/null -w '%{redirect_url}' "$GH/releases/latest" 2>/dev/null | sed -n 's#.*/releases/tag/##p') || b=
-    if [[ -n $a && -n $b && $a != "$b" ]]; then
-        echo "  Hinweis: hookshot-linux.txt nennt $a, /releases/latest leitet auf $b. Genommen wird $a." >&2
-    fi
-    local tag=${a:-$b}
-    [[ -n $tag ]] && valid_tag "$tag" || return 1
+    local tag
+    tag=$("${CURL[@]}" "$API/releases/latest" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])') || return 1
+    valid_tag "$tag" || return 1
     echo "$tag"
 }
 
@@ -94,13 +90,28 @@ want_tag() {
     fi
 }
 
-# Die AppImage eines Releases, aus dessen SHA256SUMS: "<sha256> <name>". Der Name wird gelesen, nicht aus dem Tag
-# gebildet: beim nightly heisst sie nach ihrem Build (Hookshot-v2.2.0-rc.1-34-gb4c81530-x86_64.AppImage).
-release_appimage() {   # tag -> "sha name"
-    local sums
-    sums=$("${CURL[@]}" "$GH/releases/download/$1/SHA256SUMS") || return 1
-    awk '$2 ~ /^Hookshot-.*-x86_64\.AppImage$/ {print $1, $2; exit}' <<<"$sums" | grep .
+# SHA256SUMS aelterer Releases bevorzugen. Neue Releases liefern die Pruefsumme
+# im zsync-Header; der AppImage-Name kommt aus den Release-Assets.
+release_appimage() {
+    local sums name hash
+    if sums=$("${CURL[@]}" "$GH/releases/download/$1/SHA256SUMS" 2>/dev/null); then
+        awk '$2 ~ /^Hookshot-.*-x86_64\.AppImage$/ {print $1, $2; exit}' <<<"$sums" | grep . && return 0
+    fi
+    name=$("${CURL[@]}" "$API/releases/tags/$1" | python3 -c '
+import json,re,sys
+assets=json.load(sys.stdin).get("assets", [])
+print(next(a["name"] for a in assets if re.fullmatch(r"Hookshot-.*-x86_64\.AppImage", a["name"])))
+') || return 1
+    hash=$("${CURL[@]}" "$GH/releases/download/$1/$name.zsync" | python3 -c '
+import re,sys
+header=sys.stdin.buffer.read().split(b"\n\n", 1)[0]
+m=re.search(rb"(?m)^SHA-1: ([0-9a-fA-F]{40})\r?$", header)
+if not m: sys.exit(1)
+print(m.group(1).decode().lower())
+') || return 1
+    echo "$hash $name"
 }
+
 appimage_version() { local v=${1#Hookshot-}; echo "${v%-x86_64.AppImage}"; }
 
 builder_tag() { [[ -f $BUILDERS/current ]] && tr -d ' \r\n' < "$BUILDERS/current" || true; }
@@ -111,12 +122,12 @@ apprun() {
 game_tag() { { sed -n 's/^version=//p' "$OUT_DIR/hookshot_version.txt" 2>/dev/null || true; } | head -1 | tr -d '\r '; }
 
 stage_update() {
-    local tag name tmp want ver line
+    local tag name tmp want ver line checksum
     tag=$(want_tag)
     log "Builder fuer $tag ($GH/releases/tag/$tag)"
     mkdir -p "$BUILDERS"
     line=$(release_appimage "$tag") ||
-        die "SHA256SUMS von $tag nicht ladbar oder ohne Linux-AppImage: nichts wird ungeprueft entpackt"
+        die "Pruefsumme von $tag nicht ladbar oder ohne Linux-AppImage: nichts wird ungeprueft entpackt"
     want=${line%% *} name=${line#* }
     ver=$(appimage_version "$name")
     valid_tag "$ver" || die "unerwarteter AppImage-Name: $name"
@@ -127,8 +138,13 @@ stage_update() {
         rm -rf "$tmp"; mkdir -p "$tmp"
         echo "  lade $name"
         "${CURL[@]}" -o "$tmp/$name" "$GH/releases/download/$tag/$name" || die "Download von $name fehlgeschlagen"
-        [[ $(sha256sum "$tmp/$name" | cut -d' ' -f1) == "$want" ]] || die "SHA-256 von $name stimmt nicht"
-        echo "  SHA-256 stimmt ($want)"
+        case ${#want} in
+            64) checksum=$(sha256sum "$tmp/$name" | cut -d' ' -f1) ;;
+            40) checksum=$(sha1sum "$tmp/$name" | cut -d' ' -f1) ;;
+            *) die "ungueltige Pruefsumme fuer $name" ;;
+        esac
+        [[ $checksum == "$want" ]] || die "Pruefsumme von $name stimmt nicht"
+        echo "  Pruefsumme stimmt ($want)"
         chmod +x "$tmp/$name"
         (cd "$tmp" && "./$name" --appimage-extract >/dev/null) || die "Entpacken der AppImage fehlgeschlagen"
         [[ -x $tmp/squashfs-root/AppRun ]] || die "AppRun fehlt in der AppImage"

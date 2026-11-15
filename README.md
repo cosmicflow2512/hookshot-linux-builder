@@ -1,23 +1,23 @@
 # hookshot-linux-builder
 
-Unraid-Container, der [NotRexed/Hookshot](https://github.com/NotRexed/Hookshot) baut: *The Legend of Zelda: Ocarina of
+Unraid-Container, der [Hookshot/Hookshot](https://git.notrexed.dev/Hookshot/Hookshot) baut: *The Legend of Zelda: Ocarina of
 Time* (Switch-2-Version), statisch rekompiliert, als Linux-Spielordner. Aus der eigenen `.nup`, auf dem eigenen Server,
 ohne Fenster. Der fertige Ordner läuft auf einem anderen Linux-Rechner (z. B. Linux auf der PS5, Steam Deck).
 
 Im Image sind weder Spieldateien noch Keys oder Builds, auch nicht Hookshot selbst. Der Container lädt zur Laufzeit die
-offizielle AppImage des Releases, prüft sie gegen `SHA256SUMS` des Releases und entpackt sie nach `/config`.
+offizielle AppImage des Releases, prüft sie gegen `Release-Prüfsummen (SHA-256 oder SHA-1 aus dem zsync-Header)` des Releases und entpackt sie nach `/config`.
 
 ## Was er macht
 
 | Stufe | Inhalt |
 | --- | --- |
 | check | neuestes Release gegen den geladenen Builder und den gebauten Spielordner |
-| update | AppImage des gewählten Releases laden (Standard `latest`), SHA-256 prüfen, entpacken |
+| update | AppImage des gewählten Releases laden (Standard `latest`), Prüfsumme prüfen, entpacken |
 | build | `AppRun --cli` (das ist `nx2/make_game.py`): `.nup` lesen, Lift, Kompilieren, Spielordner nach `/output` |
 | deploy | `/output` per rsync über SSH nach `DEPLOY_TARGET`, ohne `--delete` |
 
 Grundlage ist der Abschnitt „Linux, the AppImage from the command line" im
-[Upstream-README](https://github.com/NotRexed/Hookshot/blob/main/readme.md#build-from-source). Die AppImage bringt
+[Upstream-README](https://git.notrexed.dev/Hookshot/Hookshot/src/branch/main/readme.md#build-from-source). Die AppImage bringt
 Compiler (clang/lld), Python, ein glibc-2.35-Sysroot, FFmpeg und SDL2 mit. Sie wird entpackt statt gemountet, weil es
 in Docker kein FUSE gibt.
 
@@ -32,10 +32,10 @@ Abweichungen vom Build am Spielrechner:
 
 ## Release wählen
 
-Die Web-UI listet alle Releases von NotRexed/Hookshot: stabile, Vorabversionen (rc) und `nightly`, den
+Die Web-UI listet alle Releases von Hookshot/Hookshot: stabile, Vorabversionen (rc) und `nightly`, den
 Entwicklungsstand. Die Auswahl liegt in `/config/ref`, gilt ab dem nächsten „Alles bauen" und geht vor `HOOKSHOT_REF`.
-`latest` folgt immer dem neuesten stabilen Release. Die Liste kommt aus den Git-Tags, ergänzt um Datum und Vorab-Kennzeichen aus GitHubs API.
-Welche AppImage zu einem Release gehört, liest der Container aus dessen `SHA256SUMS`.
+`latest` folgt immer dem neuesten stabilen Release. Die Liste kommt aus den Git-Tags, ergänzt um Datum und Vorab-Kennzeichen aus Forgejos API.
+Welche AppImage zu einem Release gehört, liest der Container aus dessen `Release-Prüfsummen (SHA-256 oder SHA-1 aus dem zsync-Header)`.
 
 ## Voraussetzungen
 

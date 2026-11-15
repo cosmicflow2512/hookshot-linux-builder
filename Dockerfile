@@ -1,4 +1,4 @@
-# hookshot-linux-builder: baut NotRexed/Hookshot (Linux-Spielordner) aus der eigenen .nup, ohne Fenster.
+# hookshot-linux-builder: baut Hookshot/Hookshot (Linux-Spielordner) aus der eigenen .nup, ohne Fenster.
 # Compiler, Python, Sysroot, FFmpeg und SDL2 bringt die offizielle AppImage mit (zur Laufzeit nach /config geladen).
 # Das Image braucht nur, was deren Werkzeuge vom System laden (clang: libz, libstdc++), plus Web-UI und Deploy.
 FROM ubuntu:24.04

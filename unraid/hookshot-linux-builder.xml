@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/cosmicflow2512/hookshot-linux-builder/issues</Support>
   <Project>https://github.com/cosmicflow2512/hookshot-linux-builder</Project>
-  <Overview>Baut NotRexed/Hookshot (Ocarina of Time, Switch-2-Recompilation) als Linux-Spielordner aus der eigenen .nup, ohne Fenster, mit der offiziellen AppImage des neuesten Releases. Kopiert den Ordner optional per rsync/SSH auf den Linux-Rechner. Web-UI zum Starten der Stufen und Mitlesen des Logs. Braucht rund 60 GB waehrend des Builds.</Overview>
+  <Overview>Baut Hookshot/Hookshot (Ocarina of Time, Switch-2-Recompilation) als Linux-Spielordner aus der eigenen .nup, ohne Fenster, mit der offiziellen AppImage des neuesten Releases. Kopiert den Ordner optional per rsync/SSH auf den Linux-Rechner. Web-UI zum Starten der Stufen und Mitlesen des Logs. Braucht rund 60 GB waehrend des Builds.</Overview>
   <Category>Tools: GameServers:</Category>
   <WebUI>http://[IP]:[PORT:8485]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/cosmicflow2512/hookshot-linux-builder/main/unraid/hookshot-linux-builder.xml</TemplateURL>
