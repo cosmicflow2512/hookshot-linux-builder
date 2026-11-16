@@ -4,6 +4,9 @@ Unraid-Container, der [Hookshot/Hookshot](https://git.notrexed.dev/Hookshot/Hook
 Time* (Switch-2-Version), statisch rekompiliert, als Linux-Spielordner. Aus der eigenen `.nup`, auf dem eigenen Server,
 ohne Fenster. Der fertige Ordner läuft auf einem anderen Linux-Rechner (z. B. Linux auf der PS5, Steam Deck).
 
+Wahlweise baut er [MagicBeanDev/Longshot](https://git.magicbean.dev/MagicBeanDev/Longshot), die Fortsetzung von
+Hookshot (laut dessen README sind die Haupt-Maintainer dorthin gewechselt), siehe [Longshot](#longshot).
+
 Im Image sind weder Spieldateien noch Keys oder Builds, auch nicht Hookshot selbst. Der Container lädt zur Laufzeit die
 offizielle AppImage des Releases, prüft sie gegen `Release-Prüfsummen (SHA-256 oder SHA-1 aus dem zsync-Header)` des Releases und entpackt sie nach `/config`.
 
@@ -36,6 +39,37 @@ Die Web-UI listet alle Releases von Hookshot/Hookshot: stabile, Vorabversionen (
 Entwicklungsstand. Die Auswahl liegt in `/config/ref`, gilt ab dem nächsten „Alles bauen" und geht vor `HOOKSHOT_REF`.
 `latest` folgt immer dem neuesten stabilen Release. Die Liste kommt aus den Git-Tags, ergänzt um Datum und Vorab-Kennzeichen aus Forgejos API.
 Welche AppImage zu einem Release gehört, liest der Container aus dessen `Release-Prüfsummen (SHA-256 oder SHA-1 aus dem zsync-Header)`.
+
+## Longshot
+
+In der Web-UI unter **Projekt** zwischen Hookshot und Longshot wählen (gespeichert in `/config/project`, geht vor
+`PROJECT`). Grundlage ist der Abschnitt „Linux, the AppImage from the command line" im
+[Longshot-README](https://git.magicbean.dev/MagicBeanDev/Longshot/src/branch/main/README.md#build-from-source) und
+[docs/releases.md](https://git.magicbean.dev/MagicBeanDev/Longshot/src/branch/main/docs/releases.md). Der Container nimmt
+den Builder `Longshot-<version>-x86_64.AppImage` von
+[Longshots Releases](https://git.magicbean.dev/MagicBeanDev/Longshot/releases), nicht den Longshot Launcher von
+[longshot.magicbean.dev/install](https://longshot.magicbean.dev/install/): der Launcher hat ein Fenster, der Builder baut
+per `--cli`, und der Launcher baut selbst mit genau diesem Builder.
+
+Unterschiede zu Hookshot:
+
+| | Hookshot | Longshot |
+| --- | --- | --- |
+| Quelle | `git.notrexed.dev/Hookshot/Hookshot` | `git.magicbean.dev/MagicBeanDev/Longshot` |
+| Prüfung | SHA-256 aus `SHA256SUMS` oder SHA-1 aus dem zsync-Header | SHA-256 aus `SHA256SUMS`, dessen Signatur `SHA256SUMS.sig` (ECDSA P-256) gegen den Release-Schlüssel aus Longshots `scripts/release_keys.json` per `openssl` geprüft wird. Ohne gültige Signatur wird nichts entpackt |
+| Build-Werkzeuge | in der AppImage | lädt der erste `--cli` nach `/config/home/.local/share/longshot/builder/toolchains` (rund 500 MB) |
+| Zustand | `/config/builder`, `/config/work`, `/config/ref` | `/config/longshot/…` |
+| Spielordner | `/output` | `/output-longshot` (eigener Pfad im Template) |
+| Start auf dem Zielrechner | `./hookshot` | `./longshot` (Spiel: `bin/longshot`, Spielstände `~/.local/share/longshot`) |
+| Variablen | `HOOKSHOT_*` | `LONGSHOT_*` (`build.sh` setzt Speicher- und Job-Werte mit dem passenden Prefix) |
+| Releases | stabile, rc, `nightly` | Longshot hat noch kein stabiles Release: `latest` nimmt dann die neueste Vorabversion (derzeit `v3.0.0-rc.5`). Nightlies heißen `nightly-<n>-<commit>`, nur die neuesten fünf bleiben |
+
+Ohne `LONGSHOT_KEEP_BUILD_FILES=1` löscht Longshot die Build-Dateien (rund 4 GB) nach dem Build; ein Update kompiliert
+dann alles neu. Ob das Spiel `LONGSHOT_NO_UPDATE_CHECK=1` aus `longshot_env.txt` liest, ist ungeprüft (im Quelltext
+setzen es nur die Startskripte); der Eintrag schadet nicht.
+
+Spielstände von Hookshot übernimmt Longshot nicht automatisch: siehe
+[docs/saves.md](https://git.magicbean.dev/MagicBeanDev/Longshot/src/branch/main/docs/saves.md).
 
 ## Voraussetzungen
 
@@ -77,7 +111,12 @@ Compiler gleichzeitig. Ohne Limit (Extra Parameters leeren) entscheidet Upstream
 | Variable | Standard | Bedeutung |
 | --- | --- | --- |
 | `NUP_FILE` | leer | Pfad der `.nup` im Container. Leer: erste `.nup` mit `0400486024DEC000` im Namen unter `/nup` |
+| `PROJECT` | `hookshot` | `hookshot` oder `longshot`, solange in der Web-UI nichts gewählt ist |
 | `HOOKSHOT_REF` | `latest` | Vorgabe, solange in der Web-UI nichts gewählt ist: `latest` = neuestes stabiles Release, oder ein Release-Tag (`v2.1.0`, `v2.2.0-rc.1`, `nightly`) |
+| `LONGSHOT_REF` | `latest` | wie `HOOKSHOT_REF`, für Longshot (`v3.0.0-rc.5`, `nightly-348-689a4345`) |
+| `LONGSHOT_OUT_DIR` | `/output-longshot` | Spielordner von Longshot im Container |
+| `LONGSHOT_DEPLOY_TARGET` | leer | Deploy-Ziel für Longshot |
+| `LONGSHOT_KEEP_BUILD_FILES` | leer | `1`: Build-Dateien behalten, Updates kompilieren nur Geändertes |
 | `LANGUAGE` | `de` | Spielsprache, wird in `language.txt` geschrieben |
 | `DEPLOY_TARGET` | leer | `benutzer@rechner:/pfad` für das Deploy |
 | `DEPLOY_PORT` | `22` | SSH-Port |
@@ -85,14 +124,15 @@ Compiler gleichzeitig. Ohne Limit (Extra Parameters leeren) entscheidet Upstream
 | `PUID` / `PGID` | `99` / `100` | Besitzer des Spielordners nach dem Build |
 | `RUN_ON_START` | `false` | beim Containerstart sofort bauen |
 | `JOBS` | leer | Compiler gleichzeitig (`HOOKSHOT_JOBS`) |
-| `HOOKSHOT_MEM_LIMIT_GB` | Limit − 2 GB | GB, die die Compiler zusammen nehmen dürfen |
-| `HOOKSHOT_LIFT_JOBS` | 1 unter 10 GB | Emit-Prozesse des Lifts |
+| `HOOKSHOT_MEM_LIMIT_GB` | Limit − 2 GB | GB, die die Compiler zusammen nehmen dürfen (bei Longshot als `LONGSHOT_MEM_LIMIT_GB` übergeben) |
+| `HOOKSHOT_LIFT_JOBS` | 1 unter 10 GB | Emit-Prozesse des Lifts (bei Longshot `LONGSHOT_LIFT_JOBS`) |
 | `EXTRA_ARGS` | leer | weitere Optionen für `nx2/make_game.py`, z. B. `--fsr` |
 
 Liegt keine `.nup` unter `/nup`, baut der Container einen früher gebauten Spielordner mit `--update` aus den
 Spieldateien neu, die der Ordner behält.
 
-Kommandozeile ohne Web-UI: `docker exec -it hookshot-linux-builder /app/scripts/build.sh all`.
+Kommandozeile ohne Web-UI: `docker exec -it hookshot-linux-builder /app/scripts/build.sh all`
+(Projekt für einen Lauf: `docker exec -it -e PROJECT=longshot …`, sofern `/config/project` fehlt).
 
 ## Lizenz
 

@@ -31,12 +31,12 @@
   select { width:100%; background:#232833; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:8px; font:inherit; }
   .relbar { display:grid; grid-template-columns: 1fr auto; gap:6px; }
   .relbar button { width:auto; }
-  #relmsg { color:var(--dim); font-size:12px; margin-top:6px; }
+  #relmsg, .msg { color:var(--dim); font-size:12px; margin-top:6px; }
   code { font:12px ui-monospace, monospace; word-break:break-all; }
 </style>
 </head>
 <body>
-<header><h1>Hookshot Linux Builder</h1><span>Hookshot/Hookshot &rarr; Linux-Spielordner</span><span id="state">&hellip;</span></header>
+<header><h1>Hookshot Linux Builder</h1><span id="sub">&hellip; &rarr; Linux-Spielordner</span><span id="state">&hellip;</span></header>
 <main>
   <div class="side">
     <section>
@@ -51,6 +51,14 @@
       </div>
     </section>
     <section>
+      <h2>Projekt</h2>
+      <select id="proj">
+        <option value="hookshot">Hookshot (git.notrexed.dev)</option>
+        <option value="longshot">Longshot (git.magicbean.dev)</option>
+      </select>
+      <div id="projmsg" class="msg">&hellip;</div>
+    </section>
+    <section>
       <h2>Release</h2>
       <div class="relbar"><select id="rel"></select><button id="relload" title="Liste neu laden">&#8635;</button></div>
       <div id="relmsg">&hellip;</div>
@@ -59,6 +67,7 @@
       <h2>Stand</h2>
       <dl>
         <dt>Spiel</dt><dd id="nup">&ndash;</dd>
+        <dt>Spielordner</dt><dd id="out">&ndash;</dd>
         <dt>Release</dt><dd id="ref">&ndash;</dd>
         <dt>Builder</dt><dd id="builder">&ndash;</dd>
         <dt>Letzter Build</dt><dd id="build">&ndash;</dd>
@@ -78,7 +87,7 @@
 </main>
 <script>
 const $ = s => document.querySelector(s);
-let next = 0, lastLog = null;
+let next = 0, lastLog = null, project = null;
 async function api(path, opts) { const r = await fetch(path, opts); return r.json(); }
 function fmt(t) { return t ? new Date(t * 1000).toLocaleTimeString('de-DE') : ''; }
 async function refresh() {
@@ -91,13 +100,22 @@ async function refresh() {
     else { st.textContent = 'bereit'; st.className = ''; }
     document.querySelectorAll('button[data-stage]').forEach(b => b.disabled = s.running);
     $('#rel').disabled = s.running;
+    $('#proj').disabled = s.running;
+    const p = s.projects[s.project];
+    if (project !== s.project) {
+      project = s.project; $('#proj').value = s.project;
+      $('#sub').textContent = p.repo + ' \u2192 Linux-Spielordner';
+      $('#projmsg').textContent = p.host + '/' + p.repo + ', Spielordner ' + p.out + '. Gilt ab dem nächsten Lauf.';
+      loadReleases(false);
+    }
     $('#stop').disabled = !s.running;
     $('#nup').textContent = s.nup || 'keine .nup gefunden';
     $('#ref').textContent = s.ref;
     $('#builder').textContent = s.builder || 'noch nicht geladen';
+    $('#out').textContent = s.out;
     $('#build').textContent = s.build ? (s.build.tag || '?') + ', ' + s.build.time : 'noch keiner';
-    $('#free').textContent = s.free_config + ' GB (/config), ' + s.free_out + ' GB (/output)';
-    $('#target').textContent = s.deploy_target || 'DEPLOY_TARGET nicht gesetzt';
+    $('#free').textContent = s.free_config + ' GB (/config), ' + (s.free_out ?? '?') + ' GB (' + s.out + ')';
+    $('#target').textContent = s.deploy_target || s.deploy_env + ' nicht gesetzt';
     $('#pubkey').textContent = s.pubkey || 'noch nicht erzeugt';
     const u = s.updates, ud = $('#upd');
     if (u) { ud.textContent = (u.update ? 'es gibt etwas zu tun' : 'alles aktuell') + ' (gebaut: ' + (u.built || 'nichts') +
@@ -127,7 +145,7 @@ async function loadReleases(refresh) {
   const sel = $('#rel'), msg = $('#relmsg');
   try {
     const r = await api('/api/releases' + (refresh ? '?refresh=1' : ''));
-    const opts = [['latest', 'latest: neuestes stabiles Release']].concat(r.releases.map(x =>
+    const opts = [['latest', 'latest: neuestes stabiles Release (sonst neueste Vorabversion)']].concat(r.releases.map(x =>
       [x.tag, x.tag + ([KIND[x.kind], x.date].filter(Boolean).length ? ' (' + [KIND[x.kind], x.date].filter(Boolean).join(', ') + ')' : '')]));
     if (!opts.some(o => o[0] === r.ref)) opts.push([r.ref, r.ref]);
     sel.innerHTML = '';
@@ -142,7 +160,11 @@ $('#rel').onchange = async () => {
   refresh();
 };
 $('#relload').onclick = () => loadReleases(true);
-loadReleases(false);
+$('#proj').onchange = async () => {
+  const r = await api('/api/project?project=' + encodeURIComponent($('#proj').value), { method: 'POST' });
+  if (!r.ok) alert(r.msg);
+  project = null; refresh();
+};
 $('#stop').onclick = () => api('/api/stop', { method: 'POST' }).then(refresh);
 refresh(); setInterval(refresh, 2000);
 </script>

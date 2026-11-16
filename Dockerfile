@@ -1,16 +1,18 @@
-# hookshot-linux-builder: baut Hookshot/Hookshot (Linux-Spielordner) aus der eigenen .nup, ohne Fenster.
+# hookshot-linux-builder: baut Hookshot/Hookshot oder MagicBeanDev/Longshot (Linux-Spielordner) aus der eigenen .nup, ohne Fenster.
 # Compiler, Python, Sysroot, FFmpeg und SDL2 bringt die offizielle AppImage mit (zur Laufzeit nach /config geladen).
 # Das Image braucht nur, was deren Werkzeuge vom System laden (clang: libz, libstdc++), plus Web-UI und Deploy.
+# openssl prueft die Signatur von Longshots SHA256SUMS.
 FROM ubuntu:24.04
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates curl git python3 zlib1g libstdc++6 file rsync openssh-client \
+        ca-certificates curl git python3 zlib1g libstdc++6 file rsync openssh-client openssl \
     && rm -rf /var/lib/apt/lists/*
 
 ENV CONFIG_DIR=/config \
     NUP_DIR=/nup \
     OUT_DIR=/output \
+    LONGSHOT_OUT_DIR=/output-longshot \
     WEBUI_PORT=8485 \
     PYTHONUNBUFFERED=1
 

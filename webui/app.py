@@ -12,18 +12,30 @@ import urllib.parse
 import urllib.request
 
 CONFIG = os.environ.get("CONFIG_DIR", "/config")
-OUT = os.environ.get("OUT_DIR", "/output")
 LOGS = os.path.join(CONFIG, "logs")
 PORT = int(os.environ.get("WEBUI_PORT", "8485"))
 STAGES = ("check", "all", "update", "build", "deploy")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-REPO = os.environ.get("HOOKSHOT_REPO", "Hookshot/Hookshot")
-HOST = os.environ.get("HOOKSHOT_HOST", "https://git.notrexed.dev").rstrip("/")
-REF_FILE = os.path.join(CONFIG, "ref")
+# Die Projekte, die build.sh bauen kann (dort dieselben Werte). Hookshot behaelt seine Pfade direkt unter CONFIG.
+# tags: die Release-Liste auch aus den Git-Tags (Hookshots Forgejo fuehrte nicht jedes Release einzeln). Longshots
+# Repository hat die alten Hookshot-Tags ohne eigenes Release, dort nur die API.
+PROJECTS = {
+    "hookshot": {"name": "Hookshot", "repo": os.environ.get("HOOKSHOT_REPO", "Hookshot/Hookshot"),
+                 "host": os.environ.get("HOOKSHOT_HOST", "https://git.notrexed.dev").rstrip("/"),
+                 "state": CONFIG, "out": os.environ.get("OUT_DIR", "/output"), "ref_env": "HOOKSHOT_REF",
+                 "deploy_env": "DEPLOY_TARGET", "tags": True},
+    "longshot": {"name": "Longshot", "repo": os.environ.get("LONGSHOT_REPO", "MagicBeanDev/Longshot"),
+                 "host": os.environ.get("LONGSHOT_HOST", "https://git.magicbean.dev").rstrip("/"),
+                 "state": os.path.join(CONFIG, "longshot"), "out": os.environ.get("LONGSHOT_OUT_DIR", "/output-longshot"),
+                 "ref_env": "LONGSHOT_REF", "deploy_env": "LONGSHOT_DEPLOY_TARGET", "tags": False},
+}
+PROJECT_FILE = os.path.join(CONFIG, "project")
 TAG_RE = re.compile(r"^[A-Za-z0-9._+-]{1,80}$")
 RELEASE_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)(?:-([A-Za-z]+)\.?(\d+)?)?$")
-releases_cache = {"time": 0, "data": None}
+# nightly: Hookshots rollender Tag; nightly-<n>-<commit>: Longshots Nightlies (die neuesten fuenf bleiben)
+NIGHTLY_RE = re.compile(r"^nightly(?:-(\d+)-[0-9a-f]+)?$")
+releases_cache = {}
 
 state = {"proc": None, "stage": None, "started": None, "ended": None, "code": None, "log": None}
 lock = threading.Lock()
@@ -65,9 +77,9 @@ def stop():
     return False
 
 
-def read_json(name):
+def read_json(path):
     try:
-        with open(os.path.join(CONFIG, name)) as fh:
+        with open(path) as fh:
             return json.load(fh)
     except (OSError, ValueError):
         return None
@@ -81,12 +93,22 @@ def read_line(path):
         return None
 
 
-def current_ref():
-    return read_line(REF_FILE) or os.environ.get("HOOKSHOT_REF", "latest")
+def current_project():
+    p = read_line(PROJECT_FILE) or os.environ.get("PROJECT", "hookshot")
+    return p if p in PROJECTS else "hookshot"
+
+
+def ref_file(project):
+    return os.path.join(PROJECTS[project]["state"], "ref")
+
+
+def current_ref(project=None):
+    project = project or current_project()
+    return read_line(ref_file(project)) or os.environ.get(PROJECTS[project]["ref_env"], "latest")
 
 
 def release_kind(tag, prerelease=False):
-    if tag == "nightly":
+    if NIGHTLY_RE.match(tag):
         return "nightly"
     m = RELEASE_RE.match(tag)
     return "pre" if prerelease or (m and m.group(4)) else "stable"
@@ -98,15 +120,20 @@ def release_order(tag):
     return (int(m.group(1)), int(m.group(2)), int(m.group(3)), 0 if m.group(4) else 1, m.group(4) or "", int(m.group(5) or 0))
 
 
-def fetch_releases():
-    """Alle Releases von REPO, auch Vorabversionen und nightly: die Git-Tags (git ls-remote) und Forgejos API zusammen.
+def fetch_releases(project):
+    """Alle Releases des Projekts, auch Vorabversionen und nightly: die Git-Tags (git ls-remote) und Forgejos API zusammen.
     Die API kennt Datum und Vorab-Kennzeichen, erlaubt aber ohne Anmeldung nur 60 Abfragen je Stunde, und Forgejos
     Release-Seite fuehrt nicht jedes Release einzeln, dessen Dateien ladbar sind (v2.2.0-rc.1 stand dort nur als
     rollendes "Latest release candidate"). Die Tags sind vollstaendig. Die Sammel-Releases (linux-parts, builder-parts, rc)
     fallen weg: nur v<Zahl>... und nightly bleiben. Ob ein Tag eine Linux-AppImage hat, zeigt sich beim Laden an
-    seinen Pruefsummen"""
-    found, sources = {}, []
+    seinen Pruefsummen. Longshot: nur die API (seine Git-Tags enthalten Hookshots alte Versionen ohne Release)"""
+    cfg = PROJECTS[project]
+    HOST, REPO = cfg["host"], cfg["repo"]
+    wanted = lambda t: bool(NIGHTLY_RE.match(t) or RELEASE_RE.match(t))
+    found, sources, git_error = {}, [], "Forgejo-API nicht erreichbar"
     try:
+        if not cfg["tags"]:
+            raise LookupError
         r = subprocess.run(["git", "ls-remote", "--tags", "%s/%s.git" % (HOST, REPO)],
                            capture_output=True, text=True, timeout=30)
         if r.returncode:
@@ -114,9 +141,11 @@ def fetch_releases():
         for l in r.stdout.splitlines():
             if "refs/tags/" in l:
                 t = l.split("refs/tags/", 1)[1].replace("^{}", "")
-                if t == "nightly" or RELEASE_RE.match(t):
+                if wanted(t):
                     found[t] = {"tag": t, "kind": release_kind(t), "date": ""}
         sources.append("Git-Tags")
+    except LookupError:
+        pass
     except Exception as e:
         git_error = str(e)
     try:
@@ -125,7 +154,7 @@ def fetch_releases():
         with urllib.request.urlopen(req, timeout=15) as r:
             for rel in json.load(r):
                 tag = rel.get("tag_name") or ""
-                if rel.get("draft") or not (tag == "nightly" or RELEASE_RE.match(tag)):
+                if rel.get("draft") or not wanted(tag):
                     continue
                 found[tag] = {"tag": tag, "kind": release_kind(tag, bool(rel.get("prerelease"))),
                               "date": (rel.get("published_at") or "")[:10]}
@@ -134,18 +163,21 @@ def fetch_releases():
         pass
     if not sources:
         raise RuntimeError("Release-Liste nicht abrufbar: " + git_error)
-    nightly = [x for x in found.values() if x["tag"] == "nightly"]
-    rest = sorted((x for x in found.values() if x["tag"] != "nightly"), key=lambda x: release_order(x["tag"]), reverse=True)
+    nightly = sorted((x for x in found.values() if NIGHTLY_RE.match(x["tag"])),
+                     key=lambda x: int(NIGHTLY_RE.match(x["tag"]).group(1) or 1 << 30), reverse=True)
+    rest = sorted((x for x in found.values() if not NIGHTLY_RE.match(x["tag"])), key=lambda x: release_order(x["tag"]),
+                  reverse=True)
     return {"source": " + ".join(sources), "releases": nightly + rest}
 
 
-def releases(force=False):
+def releases(project, force=False):
     with lock:
-        if not force and releases_cache["data"] and time.time() - releases_cache["time"] < 600:
-            return releases_cache["data"]
-    data = fetch_releases()
+        c = releases_cache.get(project)
+        if not force and c and time.time() - c["time"] < 600:
+            return c["data"]
+    data = fetch_releases(project)
     with lock:
-        releases_cache.update(time=time.time(), data=data)
+        releases_cache[project] = {"time": time.time(), "data": data}
     return data
 
 
@@ -166,14 +198,21 @@ def status():
     nup_dir = os.environ.get("NUP_DIR", "/nup")
     s["nup"] = os.environ.get("NUP_FILE") or next(iter(sorted(glob.glob(os.path.join(nup_dir, "*.nup")) +
                                                              glob.glob(os.path.join(nup_dir, "*", "*.nup")))), None)
-    s["ref"] = current_ref()
-    s["builder"] = read_line(os.path.join(CONFIG, "builder", "current"))
-    s["build"] = read_json("build-info.json") if os.path.exists(os.path.join(OUT, "bin", "hookshot")) else None
-    s["updates"] = read_json("update-check.json")
-    s["deploy_target"] = os.environ.get("DEPLOY_TARGET", "")
+    project = current_project()
+    cfg = PROJECTS[project]
+    s["project"] = project
+    s["projects"] = {k: {"name": v["name"], "repo": v["repo"], "host": v["host"], "out": v["out"]} for k, v in PROJECTS.items()}
+    s["ref"] = current_ref(project)
+    s["builder"] = read_line(os.path.join(cfg["state"], "builder", "current"))
+    s["build"] = (read_json(os.path.join(cfg["state"], "build-info.json"))
+                  if os.path.exists(os.path.join(cfg["out"], "bin", project)) else None)
+    s["updates"] = read_json(os.path.join(cfg["state"], "update-check.json"))
+    s["deploy_target"] = os.environ.get(cfg["deploy_env"], "")
+    s["deploy_env"] = cfg["deploy_env"]
     s["pubkey"] = read_line(os.path.join(CONFIG, "ssh", "id_ed25519.pub"))
+    s["out"] = cfg["out"]
     s["free_config"] = free_gb(CONFIG)
-    s["free_out"] = free_gb(OUT)
+    s["free_out"] = free_gb(cfg["out"])
     return s
 
 
@@ -200,9 +239,11 @@ class H(http.server.BaseHTTPRequestHandler):
         if u.path == "/api/releases":
             try:
                 force = urllib.parse.parse_qs(u.query).get("refresh", ["0"])[0] == "1"
-                return self.send(200, json.dumps(dict(releases(force), ref=current_ref())))
+                project = current_project()
+                return self.send(200, json.dumps(dict(releases(project, force), ref=current_ref(project), project=project)))
             except Exception as e:
-                return self.send(502, json.dumps({"error": str(e), "ref": current_ref(), "releases": []}))
+                return self.send(502, json.dumps({"error": str(e), "ref": current_ref(), "project": current_project(),
+                                                  "releases": []}))
         if u.path == "/api/log":
             q = urllib.parse.parse_qs(u.query)
             try:
@@ -239,9 +280,21 @@ class H(http.server.BaseHTTPRequestHandler):
             with lock:
                 if state["proc"] and state["proc"].poll() is None:
                     return self.send(409, json.dumps({"ok": False, "msg": "waehrend eines Laufs nicht aenderbar"}))
-            with open(REF_FILE, "w") as fh:
+            path = ref_file(current_project())
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as fh:
                 fh.write(ref + "\n")
             return self.send(200, json.dumps({"ok": True, "ref": ref}))
+        if u.path == "/api/project":
+            project = urllib.parse.parse_qs(u.query).get("project", [""])[0]
+            if project not in PROJECTS:
+                return self.send(400, json.dumps({"ok": False, "msg": "unbekanntes Projekt"}))
+            with lock:
+                if state["proc"] and state["proc"].poll() is None:
+                    return self.send(409, json.dumps({"ok": False, "msg": "waehrend eines Laufs nicht aenderbar"}))
+            with open(PROJECT_FILE, "w") as fh:
+                fh.write(project + "\n")
+            return self.send(200, json.dumps({"ok": True, "project": project}))
         if u.path == "/api/stop":
             return self.send(200, json.dumps({"ok": stop()}))
         self.send(404, '{"error":"not found"}')
