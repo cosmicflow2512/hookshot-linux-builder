@@ -238,14 +238,56 @@ find_nup() {
 }
 
 # Die @@-Zeilen von make_game.py (fuer Upstreams Builder-Fenster) lesbar machen: Fortschritt nur bei jedem vollen
-# Prozent, die Zeile je kompilierter Datei entfaellt.
+# Prozent, die Zeile je kompilierter Datei entfaellt. Fortschritt, den Upstream mit \r in dieselbe Zeile schreibt (Longshots
+# Download der Build-Werkzeuge: "Downloading the build tools (1 of 5, emsdk, 134 MB)  43%"), kaeme ohne Zeilenende nie im
+# Log an: \r trennt hier wie \n, und solche Zeilen erscheinen je Schritt in 10-%-Stufen. Python statt awk, weil mawk
+# zeilenweise (-W interactive) nur an \n trennt.
 readable() {
-    "${AWK[@]}" '
-        /^@@progress / { p = int($2 * 100); if (p != last) { last = p; printf "    %3d %%\n", p; fflush() } next }
-        /^@@file /     { next }
-        /^@@stage /    { sub(/^@@stage [^ ]+ /, ""); printf "\n--- %s\n", $0; last = -1; fflush(); next }
-        /^@@/          { sub(/^@@/, ""); print; fflush(); next }
-        { print; fflush() }'
+    python3 -u -I -c '
+import os, re, sys
+PCT = re.compile(r"^(.*?)\s+(\d{1,3})\s*%\s*$")
+last_pct, step = -1, None
+def out(s):
+    sys.stdout.write(s + "\n"); sys.stdout.flush()
+def line(l):
+    global last_pct, step
+    if not l.strip():
+        return
+    if l.startswith("@@progress "):
+        try:
+            p = int(float(l.split()[1]) * 100)
+        except (IndexError, ValueError):
+            return
+        if p != last_pct:
+            last_pct = p; out("    %3d %%" % p)
+        return
+    if l.startswith("@@file "):
+        return
+    if l.startswith("@@stage "):
+        out("\n--- " + l.split(" ", 2)[2] if l.count(" ") >= 2 else l[2:]); last_pct = -1; return
+    if l.startswith("@@"):
+        out(l[2:]); return
+    m = PCT.match(l)
+    if m:
+        p = int(m.group(2)) // 10 * 10
+        if (m.group(1), p) != step:
+            step = (m.group(1), p); out("%s  %d%%" % (m.group(1), int(m.group(2))))
+        return
+    step = None
+    out(l)
+buf = b""
+while True:
+    chunk = os.read(0, 65536)
+    if not chunk:
+        break
+    buf += chunk
+    parts = re.split(rb"\r\n|\r|\n", buf)
+    buf = parts.pop()
+    for part in parts:
+        line(part.decode("utf-8", "replace"))
+if buf:
+    line(buf.decode("utf-8", "replace"))
+'
 }
 
 stage_build() {
